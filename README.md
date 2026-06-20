@@ -16,11 +16,13 @@ Persona Support Agent is a Streamlit app that classifies a customer message into
 - Google Gemini API via `google-genai`
 - ChromaDB for vector storage and retrieval
 - LangChain text splitter for chunking seeded documents
+- pypdf for reading support PDFs from the knowledge-base folder
 
 ## Project Structure
 
 - `app.py` - main Streamlit application
 - `requirements.txt` - Python dependencies
+- `data/` - support documents used to seed the vector database
 - `README.md` - project overview and setup guide
 - `chroma_db/` - local ChromaDB storage created at runtime
 
@@ -45,6 +47,16 @@ pip install -r requirements.txt
 GEMINI_API_KEY=your_api_key_here
 ```
 
+## Knowledge Base Files
+
+The app now loads documents from the `data/` folder instead of relying on inline seed text. It expects support content in:
+
+- `.md` files for markdown help articles
+- `.txt` files for plain-text notes
+- `.pdf` files for longer instructions or reference guides
+
+On first run, the app chunks and embeds those files into a persistent ChromaDB collection named `support_kb`.
+
 ## Run the App
 
 Start the Streamlit app with:
@@ -59,7 +71,7 @@ Then open the local URL shown in the terminal.
 
 1. The app loads environment variables and checks for `GEMINI_API_KEY`.
 2. It creates or opens a persistent ChromaDB collection called `support_kb`.
-3. On first run, it seeds the collection with a few sample support documents.
+3. On first run, it seeds the collection from the files in `data/`.
 4. When a user submits a message, the app:
 	- classifies the persona,
 	- creates an embedding for the query,
@@ -76,6 +88,7 @@ Then open the local URL shown in the terminal.
 ## Notes for Contributors
 
 - The app uses a local persistent ChromaDB folder, so deleting `chroma_db/` will reset the seeded knowledge base.
+- Keep the `data/` folder populated with support content so the app can rebuild the vector store if needed.
 - Keep `.env` out of version control.
 - If you change model names or API behavior, update both `app.py` and `requirements.txt` accordingly.
 

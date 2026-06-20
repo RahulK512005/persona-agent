@@ -1,0 +1,7 @@
+Billing Policy Notes
+
+Refund requests are processed within 5-7 business days after review.
+Duplicate charges are automatically flagged and routed to human review.
+If a customer reports an unexpected charge, collect the invoice ID, last four digits of the payment method, and the date of the transaction.
+
+For billing disputes, contact billing@company.com and escalate the ticket to the finance queue.

@@ -1,10 +1,12 @@
 import os
 import json
+from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 import chromadb
+from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 1. Initialization & Config
@@ -22,6 +24,8 @@ client = genai.Client(
 
 GENERATION_MODEL = "models/gemini-2.5-flash"
 EMBEDDING_MODEL = "models/gemini-embedding-001"
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 
 
 def parse_json_response(text: str) -> dict:
@@ -53,27 +57,49 @@ def get_vector_db():
 
 collection = get_vector_db()
 
+
+def load_support_documents() -> list[dict]:
+    supported_suffixes = {".md", ".txt", ".pdf"}
+    documents = []
+
+    if not DATA_DIR.exists():
+        return documents
+
+    for file_path in sorted(DATA_DIR.iterdir()):
+        if not file_path.is_file() or file_path.suffix.lower() not in supported_suffixes:
+            continue
+
+        if file_path.suffix.lower() in {".md", ".txt"}:
+            content = file_path.read_text(encoding="utf-8")
+        else:
+            reader = PdfReader(str(file_path))
+            content = "\n".join(page.extract_text() or "" for page in reader.pages)
+
+        documents.append({"source": file_path.name, "text": content})
+
+    return documents
+
 # 2. Automated Seed Data (Saves time creating manual text files)
 def seed_knowledge_base():
     if collection.count() == 0:
-        docs = {
-            "api_troubleshooting.md": "To fix 401 Unauthorized errors on API calls, verify the bearer token header. Ensure format is 'Authorization: Bearer <token>'. Production tokens expire every 90 days.",
-            "billing_policy.txt": "Refund requests are processed within 5-7 business days. All duplicate charges are flagged automatically and sent to human review. Contact billing@company.com.",
-            "password_reset_guide.md": "Users can change credentials via the account security dashboard. Click 'Forgot Password', verify the email OTP, and enter a new alpha-numeric password."
-        }
+        docs = load_support_documents()
+        if not docs:
+            st.warning("No support documents found in the data/ folder.")
+            return
+
         splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
-        for name, text in docs.items():
-            chunks = splitter.split_text(text)
+        for doc in docs:
+            chunks = splitter.split_text(doc["text"])
             for idx, chunk in enumerate(chunks):
                 emb_resp = client.models.embed_content(model=EMBEDDING_MODEL, contents=chunk)
                 embedding = emb_resp.embeddings[0].values
                 collection.add(
-                    ids=[f"{name}_{idx}"],
+                    ids=[f"{doc['source']}_{idx}"],
                     embeddings=[embedding],
-                    metadatas=[{"source": name}],
+                    metadatas=[{"source": doc["source"], "chunk_index": idx}],
                     documents=[chunk]
                 )
-        st.success("Knowledge Base auto-seeded successfully!")
+        st.success(f"Knowledge base seeded from {len(docs)} documents!")
 
 seed_knowledge_base()
 
@@ -90,9 +116,19 @@ def classify_persona(msg: str) -> dict:
 
 def generate_adaptive_response(query: str, persona: str, chunks: list) -> dict:
     best_score = max([c["score"] for c in chunks]) if chunks else 0.0
-    # Escalation Logic Threshold check (Triggered if score < 0.30 or billing issue)
-    if best_score < 0.30 or "refund" in query.lower() or "charge" in query.lower():
-        handoff = {"persona": persona, "query_preview": query[:50], "confidence": best_score, "action": "Escalate to Human"}
+    query_lower = query.lower()
+    sensitive_topics = ["refund", "charge", "billing", "legal", "account change", "account modification"]
+
+    # Escalation Logic Threshold check (Triggered if score < 0.45 or sensitive issue)
+    if best_score < 0.45 or any(topic in query_lower for topic in sensitive_topics):
+        handoff = {
+            "persona": persona,
+            "detected_issue": query[:120],
+            "retrieved_sources": [c["source"] for c in chunks],
+            "confidence_score": best_score,
+            "recommended_action": "Review issue manually and follow up with the customer.",
+            "action": "Escalate to Human"
+        }
         return {"escalated": True, "response": "I am connecting you with a human specialist.", "handoff": json.dumps(handoff, indent=2)}
 
     if persona == "Technical Expert":
@@ -123,7 +159,7 @@ if st.button("Submit Request") and user_input:
         
         # Run semantic search
         q_emb = client.models.embed_content(model=EMBEDDING_MODEL, contents=user_input).embeddings[0].values
-        search_res = collection.query(query_embeddings=[q_emb], n_results=2)
+        search_res = collection.query(query_embeddings=[q_emb], n_results=3)
         
         chunks = []
         if search_res and search_res['documents'][0]:
