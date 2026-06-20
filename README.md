@@ -27,6 +27,22 @@ Persona Support Agent is a Streamlit app that classifies a customer message into
 - `README.md` - project overview and setup guide
 - `chroma_db/` - local ChromaDB storage created at runtime
 
+## Architecture
+
+```mermaid
+flowchart TD
+	A[User Message] --> B[Persona Classifier]
+	B --> C[ChromaDB Retrieval]
+	C --> D[Top-K Support Chunks]
+	D --> E[Persona-Adaptive Generator]
+	E --> F{Retrieval Quality OK?}
+	F -- Yes --> G[Support Response]
+	F -- No or Sensitive Issue --> H[Escalate to Human]
+	H --> I[Structured Handoff JSON]
+```
+
+The app follows the same reference flow: classify the persona, retrieve relevant support content, generate a context-grounded answer, and escalate when the query is sensitive or the retrieval confidence is low.
+
 ## Prerequisites
 
 - Python 3.10 or newer
@@ -57,6 +73,8 @@ The app now loads documents from the `data/` folder instead of relying on inline
 - `.pdf` files for longer instructions or reference guides
 
 On first run, the app chunks and embeds those files into a persistent ChromaDB collection named `support_kb`.
+
+Current support documents include API troubleshooting, authentication, billing, login recovery, password reset, invoice handling, service status, refund escalation, and account access guidance.
 
 ## Run the App
 

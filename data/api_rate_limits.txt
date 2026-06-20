@@ -1,0 +1,5 @@
+API Rate Limits
+
+Requests may be throttled if the client exceeds the configured request rate.
+If a 429 response is returned, wait before retrying and confirm the account quota.
+For repeated rate-limit errors, review the integration schedule and request batching strategy.

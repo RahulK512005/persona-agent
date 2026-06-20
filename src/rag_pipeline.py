@@ -40,12 +40,25 @@ def embed_text(text: str) -> list:
 
 
 def seed_knowledge_base(collection) -> int:
-    if collection.count() != 0:
-        return 0
-
     docs = load_support_documents()
     if not docs:
         return 0
+
+    expected_sources = {doc["source"] for doc in docs}
+    existing_sources = set()
+    existing_ids = []
+    if collection.count() != 0:
+        existing = collection.get(include=["metadatas"])
+        existing_ids = list(existing.get("ids", []))
+        for metadata in existing.get("metadatas", []):
+            if metadata and "source" in metadata:
+                existing_sources.add(metadata["source"])
+
+        if expected_sources.issubset(existing_sources):
+            return 0
+
+        if existing_ids:
+            collection.delete(ids=existing_ids)
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
     inserted_chunks = 0
