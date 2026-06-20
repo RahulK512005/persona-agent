@@ -86,6 +86,11 @@ streamlit run app.py
 
 Then open the local URL shown in the terminal.
 
+## Deployment
+
+- Live app URL: add your deployed URL here
+- Screen recording: add your video link here
+
 ## How It Works
 
 1. The app loads environment variables and checks for `GEMINI_API_KEY`.
