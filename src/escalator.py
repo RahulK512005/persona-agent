@@ -3,7 +3,14 @@ import json
 
 def should_escalate(query: str, chunks: list[dict], threshold: float = 0.45) -> bool:
     query_lower = query.lower()
-    sensitive_topics = ["refund", "charge", "billing", "legal", "account change", "account modification"]
+    sensitive_topics = [
+        "refund",
+        "charge",
+        "duplicate charges",
+        "legal",
+        "account change",
+        "account modification",
+    ]
     best_score = max((chunk["score"] for chunk in chunks), default=0.0)
     return best_score < threshold or any(topic in query_lower for topic in sensitive_topics)
 
