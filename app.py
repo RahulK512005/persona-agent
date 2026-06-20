@@ -1,15 +1,8 @@
 import os
-import json
-from pathlib import Path
+
 import streamlit as st
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-import chromadb
-from pypdf import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# 1. Initialization & Config
 load_dotenv()
 st.set_page_config(page_title="Persona Support Agent", layout="wide")
 
@@ -17,163 +10,32 @@ if "GEMINI_API_KEY" not in os.environ:
     st.error("Missing GEMINI_API_KEY in environment variables.")
     st.stop()
 
-client = genai.Client(
-    api_key=os.environ["GEMINI_API_KEY"],
-    http_options=types.HttpOptions(apiVersion="v1"),
-)
+from src.classifier import classify_persona
+from src.generator import generate_adaptive_response
+from src.rag_pipeline import get_vector_db, retrieve_context, seed_knowledge_base
 
-GENERATION_MODEL = "models/gemini-2.5-flash"
-EMBEDDING_MODEL = "models/gemini-embedding-001"
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-
-
-def parse_json_response(text: str) -> dict:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1]
-        if cleaned.endswith("```"):
-            cleaned = cleaned.rsplit("```", 1)[0]
-    return json.loads(cleaned.strip())
-
-
-def normalize_persona(persona: str, message: str) -> str:
-    message_lower = message.lower()
-    if any(word in message_lower for word in ["refund", "charge", "forgot", "password", "error", "issue", "help", "broken", "not working"]):
-        return "Frustrated User"
-    if any(word in message_lower for word in ["timeline", "impact", "budget", "revenue", "executive", "business"]):
-        return "Business Executive"
-    if any(word in message_lower for word in ["api", "endpoint", "token", "401", "error code", "parameter", "stack trace", "debug"]):
-        return "Technical Expert"
-    persona_lower = persona.strip().lower()
-    if persona_lower in {"technical expert", "frustrated user", "business executive"}:
-        return "Business Executive" if persona_lower == "business executive" else persona.title()
-    return "Technical Expert"
 
 @st.cache_resource
-def get_vector_db():
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    return chroma_client.get_or_create_collection(name="support_kb")
-
-collection = get_vector_db()
+def get_collection():
+    return get_vector_db()
 
 
-def load_support_documents() -> list[dict]:
-    supported_suffixes = {".md", ".txt", ".pdf"}
-    documents = []
+collection = get_collection()
+seed_count = seed_knowledge_base(collection)
+if seed_count:
+    st.success(f"Knowledge base seeded from {seed_count} chunks!")
+elif collection.count() == 0:
+    st.warning("No support documents found in the data/ folder.")
 
-    if not DATA_DIR.exists():
-        return documents
-
-    for file_path in sorted(DATA_DIR.iterdir()):
-        if not file_path.is_file() or file_path.suffix.lower() not in supported_suffixes:
-            continue
-
-        if file_path.suffix.lower() in {".md", ".txt"}:
-            content = file_path.read_text(encoding="utf-8")
-        else:
-            reader = PdfReader(str(file_path))
-            content = "\n".join(page.extract_text() or "" for page in reader.pages)
-
-        documents.append({"source": file_path.name, "text": content})
-
-    return documents
-
-# 2. Automated Seed Data (Saves time creating manual text files)
-def seed_knowledge_base():
-    if collection.count() == 0:
-        docs = load_support_documents()
-        if not docs:
-            st.warning("No support documents found in the data/ folder.")
-            return
-
-        splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=40)
-        for doc in docs:
-            chunks = splitter.split_text(doc["text"])
-            for idx, chunk in enumerate(chunks):
-                emb_resp = client.models.embed_content(model=EMBEDDING_MODEL, contents=chunk)
-                embedding = emb_resp.embeddings[0].values
-                collection.add(
-                    ids=[f"{doc['source']}_{idx}"],
-                    embeddings=[embedding],
-                    metadatas=[{"source": doc["source"], "chunk_index": idx}],
-                    documents=[chunk]
-                )
-        st.success(f"Knowledge base seeded from {len(docs)} documents!")
-
-seed_knowledge_base()
-
-# 3. Step 2 & 4 Core AI Functions
-def classify_persona(msg: str) -> dict:
-    sys_prompt = "Analyze sentiment/tone. Classify into exactly one of: Technical Expert, Frustrated User, or Business Executive. Return only JSON."
-    resp = client.models.generate_content(
-        model=GENERATION_MODEL,
-        contents=f"{sys_prompt}\n\nMessage: {msg}\n\nReturn only valid JSON with persona, confidence, and reasoning."
-    )
-    analysis = parse_json_response(resp.text)
-    analysis["persona"] = normalize_persona(str(analysis.get("persona", "")), msg)
-    return analysis
-
-def generate_adaptive_response(query: str, persona: str, chunks: list) -> dict:
-    best_score = max([c["score"] for c in chunks]) if chunks else 0.0
-    query_lower = query.lower()
-    sensitive_topics = ["refund", "charge", "billing", "legal", "account change", "account modification"]
-
-    # Escalation Logic Threshold check (Triggered if score < 0.45 or sensitive issue)
-    if best_score < 0.45 or any(topic in query_lower for topic in sensitive_topics):
-        handoff = {
-            "persona": persona,
-            "detected_issue": query[:120],
-            "retrieved_sources": [c["source"] for c in chunks],
-            "confidence_score": best_score,
-            "recommended_action": "Review issue manually and follow up with the customer.",
-            "action": "Escalate to Human"
-        }
-        return {"escalated": True, "response": "I am connecting you with a human specialist.", "handoff": json.dumps(handoff, indent=2)}
-
-    if persona == "Technical Expert":
-        instr = "You are a Senior Engineer. Provide exact technical diagnostic paths, error codes, and parameters."
-    elif persona == "Frustrated User":
-        instr = "You are an empathetic agent. Validate frustration first, then provide simple, bulleted action items."
-    else:
-        instr = "You are a brief Executive Director. Provide high-level timelines and operational impacts only."
-
-    context_text = "\n\n".join([f"Source [{c['source']}]: {c['text']}" for c in chunks])
-    full_prompt = f"{instr}\n\nBase response strictly on context:\n{context_text}"
-    
-    resp = client.models.generate_content(
-        model=GENERATION_MODEL,
-        contents=f"{full_prompt}\n\nUser query: {query}",
-        config=types.GenerateContentConfig(temperature=0.2)
-    )
-    return {"escalated": False, "response": resp.text, "handoff": None}
-
-# 4. Streamlit Interactive Interface
 st.title("Persona-Adaptive Support Center")
 user_input = str(st.text_input("Customer Input message:", placeholder="Type a message..."))
 
 if st.button("Submit Request") and user_input:
     with st.spinner("Processing..."):
-        # Run classification
         analysis = classify_persona(user_input)
-        
-        # Run semantic search
-        q_emb = client.models.embed_content(model=EMBEDDING_MODEL, contents=user_input).embeddings[0].values
-        search_res = collection.query(query_embeddings=[q_emb], n_results=3)
-        
-        chunks = []
-        if search_res and search_res['documents'][0]:
-            for i in range(len(search_res['documents'][0])):
-                chunks.append({
-                    "text": search_res['documents'][0][i],
-                    "source": search_res['metadatas'][0][i]['source'],
-                    "score": 1.0 - (search_res['distances'][0][i] if search_res['distances'] else 0.0)
-                })
-        
-        # Generate final response
+        chunks = retrieve_context(collection, user_input, top_k=3)
         output = generate_adaptive_response(user_input, analysis["persona"], chunks)
-        
-        # Display Results
+
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Classification & Metadata Metrics")

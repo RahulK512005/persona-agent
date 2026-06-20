@@ -1,0 +1,5 @@
+Invoice FAQ
+
+Customers can request an invoice copy from the billing portal.
+If an invoice number is missing or incorrect, verify the account ID and transaction date.
+For duplicate invoices, route the case to billing review.

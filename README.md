@@ -21,6 +21,7 @@ Persona Support Agent is a Streamlit app that classifies a customer message into
 ## Project Structure
 
 - `app.py` - main Streamlit application
+- `src/` - modular app logic for config, classifier, RAG, generator, and escalation
 - `requirements.txt` - Python dependencies
 - `data/` - support documents used to seed the vector database
 - `README.md` - project overview and setup guide
