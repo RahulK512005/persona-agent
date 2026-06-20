@@ -6,8 +6,14 @@ from dotenv import load_dotenv
 load_dotenv()
 st.set_page_config(page_title="Persona Support Agent", layout="wide")
 
-if "GEMINI_API_KEY" not in os.environ:
-    st.error("Missing GEMINI_API_KEY in environment variables.")
+api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key:
+    api_key = st.secrets.get("GEMINI_API_KEY")
+
+if api_key:
+    os.environ["GEMINI_API_KEY"] = api_key
+else:
+    st.error("Missing GEMINI_API_KEY in environment variables or Streamlit secrets.")
     st.stop()
 
 from src.classifier import classify_persona
